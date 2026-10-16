@@ -727,10 +727,11 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
         }
     }
     // Undo: the last changed command gets the keys it had.
-    if undo && let Some((command, params, keys)) = st.undo.pop() {
-        if let Err(e) = app.session.execute("shortcuts.set", json!({"command": command, "params": params, "keys": keys})) {
-            app.ui.status = e.to_string();
-        }
+    if undo
+        && let Some((command, params, keys)) = st.undo.pop()
+        && let Err(e) = app.session.execute("shortcuts.set", json!({"command": command, "params": params, "keys": keys}))
+    {
+        app.ui.status = e.to_string();
     }
     for (cmd, params) in run {
         // What a change of one command's keys replaces, for Undo.

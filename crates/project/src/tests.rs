@@ -174,7 +174,7 @@ fn project_files_name_their_version_and_always_read_back() {
 fn project_files_remember_the_open_comps() {
     let (p, cid) = project_with_layer();
     let view = crate::SavedView { active_comp: Some(cid), open_comps: vec![cid] };
-    let text = p.to_file_json_with_view(&view).unwrap();
+    let text = p.to_file_json_with_view(&view, false).unwrap();
     assert_eq!(crate::saved_view(&text), view);
     assert_eq!(Project::from_json(&text).unwrap(), p, "the view is not part of the project");
     // Files from before #748 have no view; a garbled one is ignored, not an error.

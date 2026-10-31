@@ -83,7 +83,8 @@ pub fn scope_label(scope: &str) -> String {
 /// and `contexts` are active: lower wins, `None` doesn't run at all. An active context, then the
 /// focused panel, then the panel sharing its shortcuts, then the application. A shortcut of
 /// another panel still runs when nothing nearer claims the chord (the reveal keys work from the
-/// Effect Controls panel too); a context's shortcuts never run outside it.
+/// Effect Controls panel too); a context's shortcuts never run outside it. Two other panels (or
+/// two active contexts) can claim a chord at the same rank: [`pick`] runs neither.
 pub fn scope_rank(scope: &str, focused: &str, contexts: &[&str]) -> Option<u8> {
     if is_context(scope) {
         return contexts.contains(&scope).then_some(0);
@@ -97,6 +98,33 @@ pub fn scope_rank(scope: &str, focused: &str, contexts: &[&str]) -> Option<u8> {
     } else {
         4
     })
+}
+
+/// Which of the bindings matching one key press runs: `candidates` are (scope, physical,
+/// binding), in the dispatcher's order. The narrowest scope ([`scope_rank`]) wins; at the same
+/// rank an explicit physical-key binding wins, then the first one. `Err`: the best candidates
+/// belong to different scopes of the same rank (two other panels, or two active contexts), so
+/// none of them runs; it lists those scopes.
+pub fn pick<'a, T>(candidates: impl IntoIterator<Item = (&'a str, bool, T)>, focused: &str, contexts: &[&str]) -> Result<Option<T>, Vec<String>> {
+    let mut best: Option<((u8, bool), &str, T)> = None;
+    let mut tied: Vec<String> = vec![];
+    for (scope, physical, b) in candidates {
+        let Some(rank) = scope_rank(scope, focused, contexts) else { continue };
+        let at = (rank, !physical);
+        match &best {
+            Some((r, s, _)) if *r < at || (*r == at && *s == scope) => {}
+            Some((r, _, _)) if *r == at => {
+                if !tied.iter().any(|t| t == scope) {
+                    tied.push(scope.to_string());
+                }
+            }
+            _ => {
+                tied = vec![scope.to_string()];
+                best = Some((at, scope, b));
+            }
+        }
+    }
+    if tied.len() > 1 { Err(tied) } else { Ok(best.map(|(.., b)| b)) }
 }
 
 /// One thing a shortcut can run.
@@ -566,12 +594,19 @@ impl ShortcutTable {
         self.bindings()
             .into_iter()
             .filter(|(k, o)| *k == keys && o.key != b.key && scopes_overlap(&o.scope, &b.scope))
-            .map(|(k, o)| Conflict { keys: k.to_string(), key: o.key.clone(), label: o.label.clone(), scope: o.scope.clone(), overrides: o.scope != b.scope })
+            .map(|(k, o)| Conflict {
+                keys: k.to_string(),
+                key: o.key.clone(),
+                label: o.label.clone(),
+                scope: o.scope.clone(),
+                overrides: o.scope != b.scope && !(is_context(&o.scope) && is_context(&b.scope)),
+            })
             .collect()
     }
 
-    /// Every pair of commands sharing keys in the same scope: only one of the two can run.
-    /// (Pairs in different scopes are intended, see [`Conflict::overrides`].)
+    /// Every pair of commands sharing keys in the same scope, or in two contexts (which can be
+    /// active at once): only one of the two can run, or neither ([`pick`]). (Other pairs in
+    /// different scopes are intended, see [`Conflict::overrides`].)
     pub fn all_conflicts(&self) -> Vec<(String, Conflict)> {
         let mut by_keys: BTreeMap<&str, Vec<&Bindable>> = BTreeMap::new();
         for (k, b) in self.bindings() {
@@ -583,7 +618,7 @@ impl ShortcutTable {
         for (k, bs) in by_keys {
             for (i, a) in bs.iter().enumerate() {
                 for b in &bs[i + 1..] {
-                    if a.scope == b.scope {
+                    if a.scope == b.scope || (is_context(&a.scope) && is_context(&b.scope)) {
                         out.push((
                             a.key.clone(),
                             Conflict { keys: k.to_string(), key: b.key.clone(), label: b.label.clone(), scope: b.scope.clone(), overrides: false },
